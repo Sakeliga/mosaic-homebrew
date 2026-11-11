@@ -1,0 +1,93 @@
+name: Verify
+
+on:
+  pull_request:
+    branches: [main, rehearsal]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Release and Homebrew (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_ANALYTICS: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check release policy and read literal formula metadata
+        env:
+          BASE_BRANCH: ${{ github.base_ref }}
+        run: |
+          python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
+          python3 .github/scripts/verify_release.py --base "$BASE_BRANCH" --output "$RUNNER_TEMP/release.json"
+      - name: Download release and signature
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(jq -r .tag "$RUNNER_TEMP/release.json")
+          asset=$(jq -r .asset "$RUNNER_TEMP/release.json")
+          mkdir -p "$RUNNER_TEMP/release"
+          gh release download "$tag" --repo Sakeliga/mosaic-homebrew \
+            --pattern "$asset" --pattern "$asset.sigstore.json" --dir "$RUNNER_TEMP/release"
+      - name: Check downloaded sha256
+        env:
+          BASE_BRANCH: ${{ github.base_ref }}
+        run: |
+          asset=$(jq -r .asset "$RUNNER_TEMP/release.json")
+          python3 .github/scripts/verify_release.py --base "$BASE_BRANCH" \
+            --archive "$RUNNER_TEMP/release/$asset" --output "$RUNNER_TEMP/release.json"
+      - name: Locate Homebrew
+        run: |
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            echo /home/linuxbrew/.linuxbrew/bin >> "$GITHUB_PATH"
+          fi
+      - name: Install signature verifier
+        run: brew install cosign
+      - name: Verify signature identity, issuer and transparency log
+        run: |
+          asset=$(jq -r .asset "$RUNNER_TEMP/release.json")
+          identity=$(jq -r .identity "$RUNNER_TEMP/release.json")
+          identity_flag=$(jq -r .identity_flag "$RUNNER_TEMP/release.json")
+          issuer=$(jq -r .issuer "$RUNNER_TEMP/release.json")
+          cosign verify-blob "$RUNNER_TEMP/release/$asset" \
+            --bundle "$RUNNER_TEMP/release/$asset.sigstore.json" \
+            "$identity_flag" "$identity" --certificate-oidc-issuer "$issuer"
+      - name: Register checked-out tap and cache verified archive
+        run: |
+          tap_dir="$(brew --repository)/Library/Taps/mosaik/homebrew-tap"
+          mkdir -p "$(dirname "$tap_dir")"
+          ln -s "$GITHUB_WORKSPACE" "$tap_dir"
+          if brew command trust >/dev/null 2>&1; then
+            brew trust --tap mosaik/tap
+          fi
+          asset=$(jq -r .asset "$RUNNER_TEMP/release.json")
+          cache=$(brew --cache --build-from-source mosaik/tap/mosaik)
+          mkdir -p "$(dirname "$cache")"
+          cp "$RUNNER_TEMP/release/$asset" "$cache"
+      - name: Audit, install and test
+        run: |
+          brew audit --strict mosaik/tap/mosaik
+          brew style mosaik/tap/mosaik
+          brew install --build-from-source mosaik/tap/mosaik
+          brew test mosaik/tap/mosaik
+
+  verify:
+    name: verify
+    if: ${{ always() }}
+    needs: [release]
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Require both platforms to pass
+        env:
+          RESULT: ${{ needs.release.result }}
+        run: test "$RESULT" = success

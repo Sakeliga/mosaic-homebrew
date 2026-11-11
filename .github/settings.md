@@ -29,6 +29,16 @@ strict audit, installation and `brew test`. There is no version exemption:
 a formula for `0.0.0` must pass all release checks too. The lead's signed
 rehearsal provides the first real installation evidence.
 
+Before selecting either mode or invoking Homebrew, verification checks every
+entry in the checked-out commit's Git tree against a closed allowlist:
+`Formula/mosaik.rb`, `templates/mosaik.rb.tmpl`, `.github/**`, `README.md`,
+`SECURITY.md`, `LICENSE`, and `.gitignore`, plus their parent directories.
+Only regular files and directories are permitted; symlinks and submodules
+are rejected everywhere, including inside `.github`. Alternate formula paths,
+casks, external Homebrew commands, aliases and migration/rename maps fail this
+check. Only the allowed flat formula path can select release mode, so a nested
+formula cannot be mistaken for bootstrap or shadow the verified formula.
+
 The workflow uses `pull_request`, pinned actions, `contents: read`, and no
 repository or environment secrets. Checkout does not persist credentials. The
 short-lived read token is available only to the release-download step, so it

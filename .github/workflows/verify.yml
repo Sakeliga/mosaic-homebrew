@@ -23,6 +23,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Validate entire tap tree and select verification mode
+        id: mode
+        run: python3 .github/scripts/verify_tree.py >> "$GITHUB_OUTPUT"
       - name: Locate Homebrew
         run: |
           if [[ "$RUNNER_OS" == Linux ]]; then
@@ -42,16 +45,6 @@ jobs:
         run: |
           brew install actionlint
           actionlint .github/workflows/verify.yml
-      - name: Select bootstrap or release verification
-        id: mode
-        run: |
-          if [[ -e Formula/mosaik.rb || -L Formula/mosaik.rb ]]; then
-            test -f Formula/mosaik.rb && test ! -L Formula/mosaik.rb
-            echo 'release=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'release=false' >> "$GITHUB_OUTPUT"
-            echo 'Bootstrap: no formula in this tree; static checks passed.'
-          fi
       - name: Read literal metadata and require exact rendered formula
         if: steps.mode.outputs.release == 'true'
         env:

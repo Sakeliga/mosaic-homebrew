@@ -2,7 +2,7 @@ class Mosaik < Formula
   desc "Sign in to Mosaik and use its products from a terminal or agent"
   homepage "https://auth.mosaikhq.app"
   url "https://github.com/Sakeliga/mosaic-homebrew/releases/download/rehearsal-v2.0.0-43103350378-1/mosaik-2.0.0.tar.gz"
-  sha256 "a48436b83c6d630e3d567727159d314e3437a50ab37edb7faf5accf8dde299b2"
+  sha256 "000036b83c6d630e3d567727159d314e3437a50ab37edb7faf5accf8dde299b2"
   license :cannot_represent
 
   depends_on "node@24"

@@ -1,17 +1,15 @@
 class Mosaik < Formula
   desc "Sign in to Mosaik and use its products from a terminal or agent"
   homepage "https://auth.mosaikhq.app"
-  # The first release pull request replaces this placeholder version, URL and hash.
-  url "https://github.com/Sakeliga/mosaic-homebrew/releases/download/mosaik-v0.0.0/mosaik-0.0.0.tar.gz"
-  version "0.0.0"
-  sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+  url "{{url}}"
+  sha256 "{{sha256}}"
   license :cannot_represent
 
   depends_on "node@24"
 
   def install
     libexec.install "mosaik.mjs"
-    (share/"mosaik").install "guide.md"
+    pkgshare.install "guide.md"
     prefix.install "LICENSE"
     (bin/"mosaik").write <<~SH
       #!/bin/sh

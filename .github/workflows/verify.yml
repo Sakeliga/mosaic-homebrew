@@ -23,13 +23,43 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Check release policy and read literal formula metadata
+      - name: Locate Homebrew
+        run: |
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            echo /home/linuxbrew/.linuxbrew/bin >> "$GITHUB_PATH"
+          fi
+      - name: Check release policy, rendering and hashes
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
+      - name: Check template style
+        run: |
+          template_dir="$(brew --repository)/Library/Taps/mosaik/homebrew-template"
+          python3 .github/scripts/render_formula.py --version 0.0.0 \
+            --url https://github.com/Sakeliga/mosaic-homebrew/releases/download/mosaik-v0.0.0/mosaik-0.0.0.tar.gz \
+            --sha256 0000000000000000000000000000000000000000000000000000000000000000 \
+            --output "$template_dir/Formula/mosaik.rb"
+          brew style mosaik/template/mosaik
+      - name: Lint workflow
+        run: |
+          brew install actionlint
+          actionlint .github/workflows/verify.yml
+      - name: Select bootstrap or release verification
+        id: mode
+        run: |
+          if [[ -e Formula/mosaik.rb || -L Formula/mosaik.rb ]]; then
+            test -f Formula/mosaik.rb && test ! -L Formula/mosaik.rb
+            echo 'release=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'release=false' >> "$GITHUB_OUTPUT"
+            echo 'Bootstrap: no formula in this tree; static checks passed.'
+          fi
+      - name: Read literal metadata and require exact rendered formula
+        if: steps.mode.outputs.release == 'true'
         env:
           BASE_BRANCH: ${{ github.base_ref }}
         run: |
-          python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
           python3 .github/scripts/verify_release.py --base "$BASE_BRANCH" --output "$RUNNER_TEMP/release.json"
       - name: Download release and signature
+        if: steps.mode.outputs.release == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -39,20 +69,18 @@ jobs:
           gh release download "$tag" --repo Sakeliga/mosaic-homebrew \
             --pattern "$asset" --pattern "$asset.sigstore.json" --dir "$RUNNER_TEMP/release"
       - name: Check downloaded sha256
+        if: steps.mode.outputs.release == 'true'
         env:
           BASE_BRANCH: ${{ github.base_ref }}
         run: |
           asset=$(jq -r .asset "$RUNNER_TEMP/release.json")
           python3 .github/scripts/verify_release.py --base "$BASE_BRANCH" \
             --archive "$RUNNER_TEMP/release/$asset" --output "$RUNNER_TEMP/release.json"
-      - name: Locate Homebrew
-        run: |
-          if [[ "$RUNNER_OS" == Linux ]]; then
-            echo /home/linuxbrew/.linuxbrew/bin >> "$GITHUB_PATH"
-          fi
       - name: Install signature verifier
+        if: steps.mode.outputs.release == 'true'
         run: brew install cosign
       - name: Verify signature identity, issuer and transparency log
+        if: steps.mode.outputs.release == 'true'
         run: |
           asset=$(jq -r .asset "$RUNNER_TEMP/release.json")
           identity=$(jq -r .identity "$RUNNER_TEMP/release.json")
@@ -62,6 +90,7 @@ jobs:
             --bundle "$RUNNER_TEMP/release/$asset.sigstore.json" \
             "$identity_flag" "$identity" --certificate-oidc-issuer "$issuer"
       - name: Register checked-out tap and cache verified archive
+        if: steps.mode.outputs.release == 'true'
         run: |
           tap_dir="$(brew --repository)/Library/Taps/mosaik/homebrew-tap"
           mkdir -p "$(dirname "$tap_dir")"
@@ -74,6 +103,7 @@ jobs:
           mkdir -p "$(dirname "$cache")"
           cp "$RUNNER_TEMP/release/$asset" "$cache"
       - name: Audit, install and test
+        if: steps.mode.outputs.release == 'true'
         run: |
           brew audit --strict mosaik/tap/mosaik
           brew style mosaik/tap/mosaik

@@ -20,10 +20,14 @@ committing these files does not apply them.
 | Merges | Repository setting | Squash only; delete branches on merge |
 
 The required check is the final job named `verify`. It fails unless both the
-macOS and Linux release jobs succeed, including when a job is skipped or
-cancelled. There is no placeholder-version exemption: `0.0.0` has no release,
-so the bootstrap PR cannot prove installation. The first real evidence is the
-lead's signed rehearsal, followed by the first production release PR.
+macOS and Linux jobs succeed, including when a job is skipped or cancelled.
+Before `Formula/mosaik.rb` exists, each job runs static checks: template
+rendering and Homebrew style, workflow lint, and release-policy/hash tests.
+When the formula exists, each job additionally requires an exact byte-for-byte
+match with the rendered template, release download, hash and signature checks,
+strict audit, installation and `brew test`. There is no version exemption:
+a formula for `0.0.0` must pass all release checks too. The lead's signed
+rehearsal provides the first real installation evidence.
 
 The workflow uses `pull_request`, pinned actions, `contents: read`, and no
 repository or environment secrets. Checkout does not persist credentials. The
@@ -34,10 +38,36 @@ download cache, allowing installation while the tap is still private.
 
 `main` accepts only stable `X.Y.Z`, a `mosaik-vX.Y.Z` tap release and the exact
 `mosaic-auth/.github/workflows/deploy.yml@refs/tags/vX.Y.Z` signing identity.
-`rehearsal` accepts only `rehearsal-v<version>-<run>` tap releases and an
+`rehearsal` accepts only `rehearsal-v<X.Y.Z>-<run_id>-<run_attempt>` tap releases and an
 anchored identity under that same source workflow's `refs/heads/rehearsal/`.
 The issuer is always `https://token.actions.githubusercontent.com`.
 Rehearsal releases are prereleases and never update the default tap branch.
+The formula version is inferred from the tarball filename and must equal the
+version in the tag. Both branches require numeric `X.Y.Z`, with no SemVer
+prerelease suffix. A new run attempt gets a new immutable release tag.
+
+## Formula rendering contract
+
+`templates/mosaik.rb.tmpl` is the complete formula. `{{url}}` and `{{sha256}}`
+are required, `{{version}}` is optional, and each may occur more than once.
+No other `{{` is allowed. Rendering replaces those literals and preserves
+every other byte, including the trailing newline. The source release job
+performs the same substitution itself and executes nothing from this tap.
+This tap's verification uses `.github/scripts/render_formula.py`.
+
+Inputs must match these full patterns:
+
+```text
+version: [0-9]+\.[0-9]+\.[0-9]+
+sha256: [0-9a-f]{64}
+url: https://github\.com/Sakeliga/mosaic-homebrew/releases/download/(mosaik-v|rehearsal-v)[0-9A-Za-z.-]+/mosaik-[0-9.]+\.tar\.gz
+```
+
+Release verification then applies the stricter branch-specific tag and
+filename rules above. Formula changes outside template substitutions fail;
+changes to the Ruby must be visible in the template diff and reviewed by a
+code owner. The flat tarball contains `mosaik.mjs`, `guide.md` and `LICENSE`.
+The guide is embedded in the CLI; `share/mosaik/guide.md` is a convenience copy.
 
 ## GitHub App
 
@@ -57,7 +87,8 @@ its installation ID. The team ID is looked up by name.
 ```sh
 R=Sakeliga/mosaic-homebrew
 TEAM=$(gh api orgs/Sakeliga/teams/mosaic-auth-releasers --jq .id)
-read -r -p 'Release GitHub App ID: ' APP_ID
+printf 'Release GitHub App ID: '
+read -r APP_ID
 test "$TEAM" -gt 0 && test "$APP_ID" -gt 0 || exit 1
 
 gh api -X PUT orgs/Sakeliga/teams/mosaic-auth-releasers/repos/$R -f permission=push

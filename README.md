@@ -3,8 +3,8 @@
 Mosaik's command-line tool lets you sign in and use Mosaik products from a terminal.
 It also lets an agent act with the access you give it.
 
-The first release is being prepared. The `0.0.0` formula is a placeholder and
-cannot be installed until the first release pull request is merged.
+The first release is being prepared. This repository holds a formula template;
+installation becomes available when the first release pull request adds the formula.
 
 ## Install and sign in
 
@@ -73,7 +73,8 @@ workflow at that exact source tag. Cosign also checks the signing certificate
 and transparency-log evidence. A valid signature for a different version fails.
 
 For a server without Homebrew, verify the tarball as above, extract it, and run
-`node mosaik.mjs --version` with Node 24. Keep `guide.md` beside `mosaik.mjs`.
+`node mosaik.mjs --version` with Node 24. The CLI includes its agent guide;
+`guide.md` is also provided as a convenience copy.
 The standalone `.mjs` has its own signature bundle; use its matching asset and
 bundle names when checking it. The formula's hash is for the tarball only.
 
@@ -82,16 +83,22 @@ bundle names when checking it. The formula's hash is for the tarball only.
 A release of the private source repository builds the CLI twice and checks
 that both files match, checks the bundle's contents, then signs the release
 files using Sigstore. A GitHub App publishes the files here and opens a pull
-request updating the formula's URL, version and sha256.
+request rendering [the formula template](templates/mosaik.rb.tmpl) with the
+release URL and sha256. Homebrew infers the version from the URL.
 
-This tap checks the exact release URL, downloaded hash and signing identity,
+This tap requires the formula to match the rendered template byte for byte,
+then checks the exact release URL, downloaded hash and signing identity,
 then audits, installs and tests the formula on macOS and Linux. A member of
 the releasers team must review and approve the pull request before it reaches
 `main`. Homebrew then installs the reviewed version using Node 24's explicit
 path. See [.github/settings.md](.github/settings.md) for the protections and
 their application status.
 
-Rehearsals use prereleases tagged `rehearsal-v<version>-<run>` and pull requests
+Before a formula exists, pull requests run static checks of the template,
+workflow and verification scripts. Once a formula exists, all download,
+signature and installation checks are required, even for version `0.0.0`.
+
+Rehearsals use prereleases tagged `rehearsal-v<X.Y.Z>-<run_id>-<run_attempt>` and pull requests
 against `rehearsal`. Only that branch accepts signatures from the source
 workflow's `rehearsal/*` branches. `main` accepts only `mosaik-v<version>`
 releases signed at the matching `v<version>` source tag.

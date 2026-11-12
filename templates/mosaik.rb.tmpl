@@ -1,20 +1,40 @@
 class Mosaik < Formula
   desc "Sign in to Mosaik and use its products from a terminal or agent"
   homepage "https://auth.mosaikhq.app"
-  url "{{url}}"
-  sha256 "{{sha256}}"
+  version "{{version}}"
   license :cannot_represent
 
-  depends_on "node@24"
+  on_macos do
+    on_arm do
+      url "{{url_darwin_arm64}}"
+      sha256 "{{sha256_darwin_arm64}}"
+    end
+    on_intel do
+      url "{{url_darwin_x64}}"
+      sha256 "{{sha256_darwin_x64}}"
+    end
+  end
+
+  on_linux do
+    on_arm do
+      url "{{url_linux_arm64}}"
+      sha256 "{{sha256_linux_arm64}}"
+    end
+    on_intel do
+      url "{{url_linux_x64}}"
+      sha256 "{{sha256_linux_x64}}"
+    end
+  end
 
   def install
-    libexec.install "mosaik.mjs"
+    # Homebrew also runs on 32-bit ARM Linux, where `on_arm` selects the 64-bit binary.
+    unless Hardware::CPU.is_64_bit?
+      odie "mosaik has no binary for a 32-bit machine. Run mosaik-#{version}.cjs with Node 24 instead."
+    end
+
+    bin.install "mosaik"
     pkgshare.install "guide.md"
     prefix.install "LICENSE"
-    (bin/"mosaik").write <<~SH
-      #!/bin/sh
-      exec "#{formula_opt_bin("node@24")}/node" "#{libexec}/mosaik.mjs" "$@"
-    SH
   end
 
   test do

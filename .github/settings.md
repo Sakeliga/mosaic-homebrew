@@ -24,8 +24,8 @@ Two checks are required, both from GitHub Actions (integration ID `15368`):
 
 | Required name | Workflow / job | Evidence |
 | --- | --- | --- |
-| `trusted-release` | `verify.yml` / `trusted-release`, on `pull_request_target` | Trusted tree, change isolation, base-template, release hash and signature checks |
-| `verify` | `homebrew.yml` / `verify`, on `pull_request` | Both OS static jobs and every applicable installation job passed; also today's bootstrap check |
+| `trusted-release` | `verify.yml` / `trusted-release`, on `pull_request_target` | Trusted tree, change isolation, base-template, and every platform's release hash and signature checks |
+| `verify` | `homebrew.yml` / `verify`, on `pull_request` | Both OS static jobs passed and, for a formula change, the installation job on each of the four platforms; also the bootstrap check |
 
 `trusted-release` is reserved for the trusted job; no head-defined job in this
 repository uses that name. The owner must add `trusted-release` to the existing
@@ -46,8 +46,9 @@ If `Formula/mosaik.rb` differs from the event's base commit, it must be the
 only changed path. A combined formula plus template, script, workflow, or
 documentation change fails and names the other paths. Removing the formula
 also fails. The proposed formula must match the **base commit's template**
-byte for byte, then its downloaded hash and signature must pass. There is no
-version exemption, including `0.0.0`.
+byte for byte, then the downloaded hash and signature of every platform's
+tarball must pass; one platform failing fails the check. There is no version
+exemption, including `0.0.0`.
 
 If the formula is unchanged, trusted verification checks the tree and selects
 static mode. Proposed template/script/workflow changes run their static tests,
@@ -83,11 +84,17 @@ The pinned cosign installer and signature verification execute trusted tooling;
 downloaded assets are never executed in this job.
 
 Installation stays on `pull_request`, with the same read-only permissions and
-no secrets. Fresh installation runners repeat the **base** policy, template,
-hash and signature checks for the event's exact head before checking it out or
-running Homebrew. They do not consume PR-written metadata or a shared cache
-from static checks. Only these unprivileged runners seed a local Homebrew
-download cache with the verified tarball for private-release installation.
+no secrets. It runs on one GitHub-hosted runner per platform: `macos-latest`
+(darwin-arm64), `macos-26-intel` (darwin-x64), `ubuntu-latest` (linux-x64) and
+`ubuntu-24.04-arm` (linux-arm64). Each fresh runner repeats the **base** policy
+and template check and the hash and signature checks of all four tarballs for
+the event's exact head before checking it out or running Homebrew. They do not
+consume PR-written metadata or a shared cache from static checks. Each runner
+confirms it is the platform its job names, seeds its local Homebrew download
+cache with the verified tarball for that platform, and fails unless the cache
+path Homebrew chose for this machine ends in that tarball's name. It then
+audits, installs and tests the formula, requires `brew deps` to print nothing,
+and requires that the installed binary links to nothing inside Homebrew.
 
 The trusted workflow must exist on the default branch before it can run.
 PR #1's original base (`80ff308`) contains only README.md. Its head-defined
@@ -103,32 +110,118 @@ head-owned checker code as trusted verification.
 anchored identity under that same source workflow's `refs/heads/rehearsal/`.
 The issuer is always `https://token.actions.githubusercontent.com`.
 Rehearsal releases are prereleases and never update the default tap branch.
-The formula version is inferred from the tarball filename and must equal the
-version in the tag. Both branches require numeric `X.Y.Z`, with no SemVer
-prerelease suffix. A new run attempt gets a new immutable release tag.
+All four URLs must name the same release tag and the same version, each URL
+must name the platform of the block it stands in, and the formula's `version`
+line must equal the version in the URLs and the tag. Both branches require
+numeric `X.Y.Z`, with no SemVer prerelease suffix. A new run attempt gets a
+new immutable release tag.
 
 ## Formula rendering contract
 
-`templates/mosaik.rb.tmpl` is the complete formula. `{{url}}` and `{{sha256}}`
-are required, `{{version}}` is optional, and each may occur more than once.
-No other `{{` is allowed. Rendering replaces those literals and preserves
-every other byte, including the trailing newline. The source release job
-performs the same substitution itself and executes nothing from this tap.
-This tap's verification uses `.github/scripts/render_formula.py`.
+`templates/mosaik.rb.tmpl` is the complete formula. It has one `url` and one
+`sha256` per platform, inside Homebrew's `on_macos` / `on_linux` and `on_arm` /
+`on_intel` blocks, and no dependency. The placeholders are:
 
-Inputs must match these full patterns:
+```text
+{{url_darwin_arm64}}  {{sha256_darwin_arm64}}
+{{url_darwin_x64}}    {{sha256_darwin_x64}}
+{{url_linux_x64}}     {{sha256_linux_x64}}
+{{url_linux_arm64}}   {{sha256_linux_arm64}}
+{{version}}
+```
+
+The eight `url` and `sha256` placeholders are required and `{{version}}` is
+optional; each may occur more than once. No other `{{` is allowed. Rendering
+replaces those literals and preserves every other byte, including the trailing
+newline. The source release job performs the same substitution itself and
+executes nothing from this tap. This tap's verification uses
+`.github/scripts/render_formula.py`.
+
+Inputs must match these full patterns, where `<platform>` is the platform in
+the placeholder's name written with a hyphen (`darwin-arm64`, `darwin-x64`,
+`linux-x64`, `linux-arm64`):
 
 ```text
 version: [0-9]+\.[0-9]+\.[0-9]+
-sha256: [0-9a-f]{64}
-url: https://github\.com/Sakeliga/mosaic-homebrew/releases/download/(mosaik-v|rehearsal-v)[0-9A-Za-z.-]+/mosaik-[0-9.]+\.tar\.gz
+sha256:  [0-9a-f]{64}
+url:     https://github\.com/Sakeliga/mosaic-homebrew/releases/download/(mosaik-v|rehearsal-v)[0-9A-Za-z.-]+/mosaik-[0-9.]+-<platform>\.tar\.gz
 ```
 
-Release verification then applies the stricter branch-specific tag and
-filename rules above. Formula changes outside template substitutions fail;
-changes to the Ruby must be reviewed in a separate template-only PR before
-the release PR. The flat tarball contains `mosaik.mjs`, `guide.md` and `LICENSE`.
-The guide is embedded in the CLI; `share/mosaik/guide.md` is a convenience copy.
+Release verification reads the values back out of the proposed formula by
+matching it against the base template, so a formula that differs from the
+template anywhere outside a placeholder fails. It then applies the stricter
+branch-specific tag, version and file-name rules above to every platform.
+Changes to the Ruby must be reviewed in a separate template-only PR before the
+release PR. Each tarball is flat and contains `mosaik` (the executable),
+`guide.md` and `LICENSE`. The guide is embedded in the CLI;
+`share/mosaik/guide.md` is a convenience copy.
+
+The template states `version`. Homebrew cannot read it from these file names:
+for `mosaik-2.1.0-darwin-arm64.tar.gz` and the other three, Homebrew 7.0.13
+infers `64`. With the line present, `brew audit --strict` reports nothing on
+any of the four platforms.
+
+The formula covers every platform Homebrew supports. Homebrew also runs,
+unsupported, on 32-bit ARM Linux, where `on_arm` would select the 64-bit
+binary; there `install` stops with one line that names the `.cjs`. On any
+other processor type, such as PowerPC or RISC-V, neither block applies and
+Homebrew itself stops with `formula requires at least a URL`.
+
+### Platform list
+
+A release ships the platforms named in three places, which change together
+with the source repository's release job:
+
+| Place | What names the platforms |
+| --- | --- |
+| `.github/scripts/render_formula.py` | `PLATFORMS`, the only list in the scripts; every other script imports it |
+| `templates/mosaik.rb.tmpl` | One `url` and `sha256` pair per platform |
+| `.github/workflows/homebrew.yml` | The installation job's `matrix.include`, one runner per platform |
+
+To drop a platform, remove it from those three and from the README. So that
+its users still get one plain line from Homebrew, give its operating system's
+block the remaining platform's `url` and `sha256` directly, with an
+architecture requirement. For Intel macOS that is `depends_on arch: :arm64`
+inside `on_macos`, and Homebrew then prints `mosaik: The arm64 architecture is
+required for this software.` (read from Homebrew 7.0.13 under simulation, not
+on an Intel Mac).
+
+## Moving from 2.0.0 to one binary per platform
+
+Release 2.0.0 is a script that runs on Homebrew's `node@24`. From 2.1.0 a
+release is one self-contained binary per platform. The template and scripts
+change first, in a pull request that leaves `Formula/mosaik.rb` alone:
+
+1. That pull request runs `trusted-release` with the scripts of its base, the
+   ones written for 2.0.0. The formula is unchanged, so they select static
+   mode and check only the tree. Its installation jobs start, reach static
+   mode and stop there.
+2. After it merges, `main` holds the 2.0.0 formula beside a template it was
+   not rendered from. Nothing compares the two: the byte-for-byte check runs
+   only for a pull request that changes the formula. Users keep installing
+   2.0.0, and other pull requests are unaffected
+   (`test_untouched_old_formula_does_not_block_other_changes`).
+3. The 2.1.0 release then opens a pull request that changes only the formula.
+   The base's new scripts require it to equal the new template rendered with
+   four URLs under `mosaik-v2.1.0`, download all four tarballs, and check each
+   hash and each signature against `deploy.yml@refs/tags/v2.1.0`. The four
+   installation jobs install and test the binary for their own platform.
+4. The 2.0.0 formula cannot be proposed again in any form: a formula change
+   that is not the new template rendered fails. Going back to a script
+   release would therefore start with a template pull request, not a formula
+   one.
+
+Owner steps for this change, none of which alters a setting or ruleset:
+
+- Recreate the `rehearsal` branch from this change's branch before the
+  rehearsal, so that rehearsal pull requests are checked by the new scripts
+  and template.
+- Merge this change before publishing the source release that proposes the
+  first binary formula. A formula proposed against the old template fails
+  `trusted-release`.
+- The required checks stay `verify` and `trusted-release`. The installation
+  jobs are renamed `Homebrew installation (<platform>)`; they are not required
+  by name, `verify` requires them.
 
 ## GitHub App
 

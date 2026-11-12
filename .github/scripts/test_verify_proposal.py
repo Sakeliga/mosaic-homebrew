@@ -92,6 +92,18 @@ class ProposalTest(unittest.TestCase):
                     ValueError, f"version {version} is not greater than 2.9.10, the version on main"):
                 self.check()
 
+    def test_a_version_with_a_leading_zero_cannot_be_proposed_or_block_a_later_one(self):
+        self.release("2.9.0")
+        self.base = self.snapshot()
+        literal = TEMPLATE.read_text()
+        for name, value in values("2.010.0", "mosaik-v2.010.0").items():
+            literal = literal.replace("{{" + name + "}}", value)
+        self.write("Formula/mosaik.rb", literal.encode())
+        with self.assertRaises(ValueError):
+            self.check()
+        self.release("2.10.0")
+        self.assertEqual(self.check()["version"], "2.10.0")
+
     def test_main_refuses_the_same_version_with_other_hashes(self):
         self.formula()
         self.base = self.snapshot()

@@ -10,7 +10,9 @@ from pathlib import Path
 # homebrew.yml name the same platforms and must change with it.
 PLATFORMS = ("darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64")
 
-VERSION = r"[0-9]+\.[0-9]+\.[0-9]+"
+# Canonical only: each number is 0 or has no leading zero, so 2.010.0 cannot stand for 2.10.0.
+NUMBER = r"(?:0|[1-9][0-9]*)"
+VERSION = NUMBER + r"\." + NUMBER + r"\." + NUMBER
 SHA256 = r"[0-9a-f]{64}"
 RELEASES = "https://github.com/Sakeliga/mosaic-homebrew/releases/download/"
 

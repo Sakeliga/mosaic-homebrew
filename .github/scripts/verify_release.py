@@ -6,11 +6,10 @@ import json
 import re
 from pathlib import Path
 
-from render_formula import PLATFORMS, RELEASES, patterns, placeholder, render, required
+from render_formula import PLATFORMS, RELEASES, VERSION as STABLE, patterns, placeholder, render, required
 
 WORKFLOW = "https://github.com/Sakeliga/mosaic-auth/.github/workflows/deploy.yml"
 ISSUER = "https://token.actions.githubusercontent.com"
-STABLE = r"[0-9]+\.[0-9]+\.[0-9]+"
 MISMATCH = "formula must exactly match the rendered template, byte for byte"
 
 

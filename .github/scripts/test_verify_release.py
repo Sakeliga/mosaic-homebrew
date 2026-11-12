@@ -88,6 +88,27 @@ class ReleasePolicyTest(unittest.TestCase):
             with self.subTest(tag=tag), self.assertRaises(ValueError):
                 check("rehearsal", version=version, tag=tag)
 
+    def test_only_canonical_versions_are_accepted(self):
+        for version in ("2.010.0", "02.1.0", "2.1.00", "2.01.0", "00.0.0", "2.1.0.0", "2.1", "v2.1.0"):
+            tag = f"mosaik-v{version}"
+            with self.subTest(version=version, where="everywhere"), self.assertRaises(ValueError):
+                check(version=version, tag=tag)
+            with self.subTest(version=version, where="version line"), self.assertRaises(ValueError):
+                check(version=version)
+            with self.subTest(version=version, where="tag"), self.assertRaises(ValueError):
+                check(tag=tag)
+            with self.subTest(version=version, where="rehearsal"), self.assertRaises(ValueError):
+                check("rehearsal", version=version, tag=f"rehearsal-v{version}-123-1")
+            for platform in PLATFORMS:
+                changed = {placeholder("url", platform): url(platform, version=version)}
+                with self.subTest(version=version, where=platform), self.assertRaises(ValueError):
+                    check(**changed)
+            with self.subTest(version=version, where="render"), self.assertRaisesRegex(ValueError, "invalid version"):
+                render(TEMPLATE.read_bytes(), {**values(), "version": version})
+        for version in ("0.0.0", "2.10.0", "10.20.30", "2.0.10"):
+            with self.subTest(version=version):
+                self.assertEqual(check(version=version, tag=f"mosaik-v{version}")["version"], version)
+
     def test_one_platform_naming_another_tag_fails(self):
         for platform in PLATFORMS:
             for base, good, other in (("main", "mosaik-v2.1.0", "mosaik-v2.0.0"),

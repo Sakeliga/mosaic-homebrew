@@ -35,37 +35,67 @@ repository uses that name. Both names have been required on `main` since
 GitHub attaches a check run to a commit, not to a pull request, and both
 workflows also run for pull requests into `rehearsal`, with that branch's
 scripts and template. The same head opened into both branches would otherwise
-show a required name green from the `rehearsal` run. So the two jobs take
-their name from the base branch, and a run into any base other than `main`
-cannot report a name `main` requires:
+show a required name green from the `rehearsal` run. Two rules bind a
+required name to a run that judges a pull request into `main`.
+
+**The name and the first step.** The two jobs take their name from an
+expression on the base branch:
 
 | Base of the pull request | `verify.yml` job reports | `homebrew.yml` job reports |
 | --- | --- | --- |
 | `main` | `trusted-release` | `verify` |
-| `rehearsal` (any base that is not exactly `main`) | `rehearsal-trusted-release` | `rehearsal-verify` |
+| `rehearsal`, or any other name that is not `main` in any letter case | `rehearsal-trusted-release` | `rehearsal-verify` |
+| `Main`, `MAIN` and other spellings that differ only in case | `trusted-release`, and the job fails | `verify`, and the job fails |
 
-The other jobs report `Static checks (<os>)` and `Homebrew installation
-(<platform>)` for either base; no ruleset requires those. The name of
-`trusted-release` is set by the default branch's workflow, which a pull
-request cannot change. `test_workflow_names.py` reads both workflows and fails
-if any job could report a required name for another base. The `rehearsal`
-branch is also closed to everyone but the releasers team (ruleset below), so
-the scripts a `rehearsal` run uses are reviewed ones.
+GitHub compares strings in expressions without regard to case, so the
+expression alone would give a branch named `Main` the required names. The
+first step of both jobs therefore compares the base branch's name with `main`
+exactly, in the shell, with the name passed through the environment, and
+exits non-zero before anything else runs. The scripts compare the name
+exactly as well. The other jobs report `Static checks (<os>)` and `Homebrew
+installation (<platform>)` for either base; no ruleset requires those.
 
-Required checks are matched by name and GitHub App, not by workflow ownership.
-Residual risk: a workflow-changing PR can publish any check name, including a
-competing `trusted-release` result. The real trusted job rejects any formula
-change combined with `.github/**` or any other changed path; a workflow change
-must be separate from a formula change and needs a code owner's approval.
+**The judging commit.** For a pull request into `main`, the trusted job checks
+out `refs/heads/main` by name and takes its scripts and template from that
+tip, not from the base commit the event names: an event can name a base
+commit that is not on `main`, for instance after a pull request is
+retargeted. The event's base commit must also be an ancestor of that tip;
+otherwise the job fails and asks the author to update the branch from `main`.
+The changed-path rule, the formula-equals-template comparison and the version
+rule all compare the head with `main`'s tip. A formula pull request that is
+behind `main` can therefore fail on paths that changed on `main` since; the
+integrity ruleset requires an up-to-date branch anyway. For a pull request
+into `rehearsal`, the judging commit is the event's base commit.
+
+`test_workflow_names.py` reads every file under `.github/workflows/` as
+committed. It fails if a job in any of them could report a required name
+other than through the expression above followed by that first step, if the
+step's script lets any base but `main` through, or if a trigger is widened. It
+checks the files in a checkout; it does not observe what GitHub reports.
+
+The `rehearsal` branch does not exist at present. Its ruleset (below) is not
+applied, and nothing reviews what is pushed to it; until the ruleset is
+applied, anyone with write access, including the release App, could create
+it with scripts of their choosing. Such a run reports only the `rehearsal-…`
+names.
+
+**Known limit.** Required checks are matched by name and GitHub App, not by
+the workflow file that produced them. A workflow file added or changed by a
+pull request runs on `pull_request` from that pull request and can report any
+name, including `trusted-release` or `verify`. Such a pull request cannot also
+change the formula, since the real trusted job fails any formula change that
+comes with another changed path, and it needs a code owner's approval.
 Reviewers must inspect workflow changes for competing check names rather than
-treating a green name as proof of its origin. This design also relies on the
-release App having **no Workflows permission**, checked below, so its token
-cannot add or modify a workflow to publish a competing result.
+treating a green name as proof of its origin. The stronger control, an
+organisation ruleset that requires a named workflow file, is not available on
+this organisation's plan. The design also relies on the release App having
+**no Workflows permission**, checked below, so its token cannot add or modify
+a workflow.
 
-If `Formula/mosaik.rb` differs from the event's base commit, it must be the
+If `Formula/mosaik.rb` differs from the judging commit, it must be the
 only changed path. A combined formula plus template, script, workflow, or
 documentation change fails and names the other paths. Removing the formula
-also fails. The proposed formula must match the **base commit's template**
+also fails. The proposed formula must match the **judging commit's template**
 byte for byte, then the downloaded hash and signature of every platform's
 tarball must pass; one platform failing fails the check. There is no version
 exemption, including `0.0.0`.
@@ -107,8 +137,9 @@ by the repository's **default branch**, rather than the pull request's workflow.
 For PRs into `main`, this is the base branch's workflow. GitHub changed the
 behavior for other base branches on 2025-12-08: the workflow still comes from
 the default branch. See [GitHub's event change](https://github.blog/changelog/2025-11-07-actions-pull_request_target-and-environment-branch-protections-changes/).
-The workflow explicitly checks out the event's base SHA for its scripts and
-template, including for `rehearsal`; that base must remain owner-controlled.
+For `main` the workflow checks out the branch's own tip for its scripts and
+template; for `rehearsal` it checks out the event's base commit, so that
+branch must be owner-controlled before it is used.
 
 The trusted job fetches the exact event head into a separate bare Git repository
 under the runner's temporary directory. It never checks out, imports or executes
@@ -122,7 +153,8 @@ downloaded assets are never executed in this job.
 Installation stays on `pull_request`, with the same read-only permissions and
 no secrets. It runs on one GitHub-hosted runner per platform: `macos-latest`
 (darwin-arm64), `macos-26-intel` (darwin-x64), `ubuntu-latest` (linux-x64) and
-`ubuntu-24.04-arm` (linux-arm64). Each fresh runner repeats the **base** policy
+`ubuntu-24.04-arm` (linux-arm64). Each fresh runner chooses the judging commit
+as the trusted job does and repeats the **base** policy
 and template check and the hash and signature checks of all four tarballs for
 the event's exact head before checking it out or running Homebrew. They do not
 read a file or a shared cache written by the static checks. One value does
@@ -183,10 +215,15 @@ the placeholder's name written with a hyphen (`darwin-arm64`, `darwin-x64`,
 `linux-x64`, `linux-arm64`):
 
 ```text
-version: [0-9]+\.[0-9]+\.[0-9]+
+version: (0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)
 sha256:  [0-9a-f]{64}
 url:     https://github\.com/Sakeliga/mosaic-homebrew/releases/download/(mosaik-v|rehearsal-v)[0-9A-Za-z.-]+/mosaik-[0-9.]+-<platform>\.tar\.gz
 ```
+
+The version pattern is stricter here than in the source repository's
+renderer: this tap accepts only canonical numbers, with no leading zero, in
+the version line, the URLs and the tag, so that `2.010.0` cannot be released
+and then stand in the way of `2.10.0`.
 
 Release verification reads the values back out of the proposed formula by
 matching it against the base template, so a formula that differs from the
@@ -240,7 +277,9 @@ change first, in a pull request that leaves `Formula/mosaik.rb` alone:
 1. That pull request runs `trusted-release` with the scripts of its base, the
    ones written for 2.0.0. The formula is unchanged, so they select static
    mode and check only the tree. Its installation jobs start, reach static
-   mode and stop there.
+   mode and stop there. Those older scripts do not print a judging commit, so
+   the installation job, in `homebrew.yml` only, then uses the event's base
+   commit; `verify.yml` has no such fallback.
 2. After it merges, `main` holds the 2.0.0 formula beside a template it was
    not rendered from. Nothing compares the two: the byte-for-byte check runs
    only for a pull request that changes the formula. Users keep installing
@@ -259,7 +298,8 @@ change first, in a pull request that leaves `Formula/mosaik.rb` alone:
 Owner steps for this change. The first adds a ruleset; nothing on `main`
 changes:
 
-- Apply the `rehearsal: releasers only` ruleset (commands above), then
+- Apply the `rehearsal: releasers only` ruleset (commands under "Apply",
+  below), then
   recreate the `rehearsal` branch from this change's branch before the
   rehearsal, so that rehearsal pull requests are checked by the new scripts
   and template.

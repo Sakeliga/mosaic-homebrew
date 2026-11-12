@@ -22,7 +22,13 @@ ELF_MACHINE = {"arm64": 183, "x64": 62}
 
 
 def executable_matches(header, platform):
-    """Whether these first bytes are a 64-bit executable for exactly this platform."""
+    """Whether these first bytes are a 64-bit executable for exactly this platform.
+
+    Only the header is read, so a file that is nothing but a header passes.
+    That is enough here: the bytes are already bound to the release by hash and
+    signature, and this check exists to catch a wrong platform's file, not a
+    forged program.
+    """
     system, _, processor = platform.partition("-")
     if system == "darwin" and processor in MACH_O_CPU and len(header) >= 16:
         magic, cpu, _subtype, kind = struct.unpack_from("<IIII", header)

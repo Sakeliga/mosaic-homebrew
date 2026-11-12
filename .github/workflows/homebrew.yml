@@ -74,18 +74,21 @@ jobs:
       # for this exact head before checking out or executing any proposed code.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ github.base_ref == 'main' && 'refs/heads/main' || github.event.pull_request.base.sha }}
+          fetch-depth: 0
           persist-credentials: false
-      - name: Fetch the exact head as bare Git data
+      - name: Choose the judging commit and fetch the exact head as bare Git data
+        id: fetch
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           python3 .github/scripts/fetch_proposal.py --event "$GITHUB_EVENT_PATH" \
-            --base-checkout "$GITHUB_WORKSPACE" --output "$RUNNER_TEMP/proposal.git"
+            --base-checkout "$GITHUB_WORKSPACE" --output "$RUNNER_TEMP/proposal.git" >> "$GITHUB_OUTPUT"
       - name: Apply the base policy before execution
         id: proposal
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          # The scripts on main before this step existed print no judging commit.
+          BASE_SHA: ${{ steps.fetch.outputs.base_sha || github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
         run: |
@@ -185,6 +188,17 @@ jobs:
     runs-on: ubuntu-latest
     permissions: {}
     steps:
+      - name: Refuse a required check name for any base but main
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          REQUIRED_NAME: ${{ github.base_ref == 'main' }}
+        run: |
+          # Expressions compare without regard to case, so `Main` also gets the
+          # required name above. The shell compares exactly.
+          if [[ "$REQUIRED_NAME" == "true" && "$BASE_REF" != "main" ]]; then
+            echo "Base '$BASE_REF' is not main; this run may not report a check that main requires." >&2
+            exit 1
+          fi
       - name: Require both static jobs and every platform's installation check
         env:
           STATIC: ${{ needs.static.result }}

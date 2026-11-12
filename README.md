@@ -15,6 +15,8 @@ brew tap mosaik/tap https://auth.mosaikhq.app/brew && brew trust --tap mosaik/ta
 mosaik auth login
 ```
 
+The `auth.mosaikhq.app/brew` address works from release 2.0.0. Until then, use the GitHub line below.
+
 Your browser opens for sign-in. If you belong to more than one organisation,
 choose the one to use. Homebrew installs Node 24 for you.
 

@@ -1,0 +1,10 @@
+name: Spoof probe
+on:
+  pull_request:
+permissions: {}
+jobs:
+  trusted-release:
+    name: trusted-release
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "a head-defined job using the trusted job's name"

@@ -11,19 +11,18 @@ installation becomes available when the first release pull request adds the form
 On macOS or Linux with [Homebrew](https://brew.sh) installed:
 
 ```sh
-brew tap mosaik/tap https://github.com/Sakeliga/mosaic-homebrew && brew trust --tap mosaik/tap && brew install mosaik
+brew tap mosaik/tap https://auth.mosaikhq.app/brew && brew trust --tap mosaik/tap && brew install mosaik
 mosaik auth login
 ```
 
 Your browser opens for sign-in. If you belong to more than one organisation,
 choose the one to use. Homebrew installs Node 24 for you.
 
-The install command uses Homebrew 7's explicit tap trust. From release 2.0.0,
-you can reach the same tap through Mosaik's own address instead. This redirect
-becomes available when that release is deployed to production:
+The install command uses Homebrew 7's explicit tap trust. If
+`auth.mosaikhq.app` is unreachable, use the same repository through GitHub:
 
 ```sh
-brew tap mosaik/tap https://auth.mosaikhq.app/brew && brew trust --tap mosaik/tap && brew install mosaik
+brew tap mosaik/tap https://github.com/Sakeliga/mosaic-homebrew && brew trust --tap mosaik/tap && brew install mosaik
 ```
 
 Run `mosaik --help` for commands or `mosaik guide` for instructions for an agent.

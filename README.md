@@ -3,9 +3,6 @@
 Mosaik's command-line tool lets you sign in and use Mosaik products from a terminal.
 It also lets an agent act with the access you give it.
 
-The first release is being prepared. This repository holds a formula template;
-installation becomes available when the first release pull request adds the formula.
-
 ## Install and sign in
 
 On macOS or Linux with [Homebrew](https://brew.sh) installed:
@@ -15,10 +12,13 @@ brew tap mosaik/tap https://auth.mosaikhq.app/brew && brew trust --tap mosaik/ta
 mosaik auth login
 ```
 
-The `auth.mosaikhq.app/brew` address works from release 2.0.0. Until then, use the GitHub line below.
-
 Your browser opens for sign-in. If you belong to more than one organisation,
 choose the one to use. Homebrew installs Node 24 for you.
+
+If you already have an older `node` from Homebrew, installing Node 24 upgrades a
+library that older copy uses, and it may then fail to start with
+`Library not loaded: … libsimdjson`. Run `brew upgrade node` to fix it, or
+`brew link --overwrite --force node@24` to stay on Node 24.
 
 The install command uses Homebrew 7's explicit tap trust. If
 `auth.mosaikhq.app` is unreachable, use the same repository through GitHub:

@@ -6,7 +6,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from verify_release import verify_formula
+from verify_release import STABLE, verify_formula
 from verify_tree import verify_tree
 
 FORMULA = b"Formula/mosaik.rb"
@@ -15,6 +15,16 @@ FORMULA = b"Formula/mosaik.rb"
 def git(repository, *args):
     return subprocess.run(["git", "-C", str(repository), *args],
                           check=True, capture_output=True).stdout
+
+
+def formula_version(formula):
+    """The one X.Y.Z a formula states, in its version line and its release file names."""
+    text = formula.decode("utf-8")
+    found = set(re.findall(r'^ *version "(' + STABLE + r')"$', text, re.MULTILINE))
+    found |= set(re.findall(r'^ *url "[^" ]*/mosaik-(' + STABLE + r')[-.][^"/ ]*"$', text, re.MULTILINE))
+    if len(found) != 1:
+        raise ValueError("cannot read one version from the formula on the base branch")
+    return tuple(int(number) for number in found.pop().split("."))
 
 
 def verify_proposal(repository, base_sha, head_sha, branch):
@@ -38,6 +48,12 @@ def verify_proposal(repository, base_sha, head_sha, branch):
     formula = git(repository, "show", f"{head_sha}:Formula/mosaik.rb")
     template = git(repository, "show", f"{base_sha}:templates/mosaik.rb.tmpl")
     release = verify_formula(formula, template, branch)
+    # `main` only moves forward. Rehearsals repeat a version under a new tag.
+    if branch == "main" and git(repository, "ls-tree", base_sha, "--", "Formula/mosaik.rb"):
+        current = formula_version(git(repository, "show", f"{base_sha}:Formula/mosaik.rb"))
+        if tuple(int(number) for number in release["version"].split(".")) <= current:
+            raise ValueError(f"version {release['version']} is not greater than "
+                             f"{'.'.join(map(str, current))}, the version on main")
     return {**result, **release, "mode": "release"}
 
 

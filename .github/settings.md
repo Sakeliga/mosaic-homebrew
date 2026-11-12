@@ -1,9 +1,9 @@
 # Repository settings
 
-`Sakeliga/mosaic-homebrew` distributes the Mosaik CLI. It stays private until
-the rehearsal passes. The owner makes it public and applies settings;
-committing these files does not apply them. The applied record below distinguishes
-the protections read back on 2026-11-11 from the pending check-name update.
+`Sakeliga/mosaic-homebrew` distributes the Mosaik CLI. It has been public
+since 2026-11-12. The owner applies settings; committing these files does not
+apply them. The applied record at the end says what was applied and read back,
+and when. One ruleset is not applied yet: `rehearsal: releasers only`, below.
 
 ## Target
 
@@ -11,6 +11,7 @@ the protections read back on 2026-11-11 from the pending check-name update.
 | --- | --- | --- |
 | `main: review` | `rulesets/main-review.json` | Pull request, one code-owner approval, latest-push approval, stale approvals dismissed, resolved threads, squash only. No bypass |
 | `main: integrity` | `rulesets/main-integrity.json` | Signed commits, up-to-date `verify` and `trusted-release` checks from GitHub Actions, no force push or deletion. No bypass |
+| `rehearsal: releasers only` | `rulesets/rehearsal.json` | Only `mosaic-auth-releasers` can create, update or delete the `rehearsal` branch. The release App has no bypass. **Not applied yet** |
 | CLI release tags | `rulesets/tags.json` | Only `mosaic-auth-releasers` and the release GitHub App can create, update or delete `mosaik-v*` and `rehearsal-v*` tags |
 | CODEOWNERS | `CODEOWNERS` | Every file requires `@Sakeliga/mosaic-auth-releasers` review; the team must have explicit write access |
 | Immutable releases | Repository setting | Published release assets and tags cannot be replaced |
@@ -28,9 +29,28 @@ Two checks are required, both from GitHub Actions (integration ID `15368`):
 | `verify` | `homebrew.yml` / `verify`, on `pull_request` | Both OS static jobs passed and, for a formula change, the installation job on each of the four platforms; also the bootstrap check |
 
 `trusted-release` is reserved for the trusted job; no head-defined job in this
-repository uses that name. The owner must add `trusted-release` to the existing
-required `verify` check immediately after the bootstrap merge (commands below).
-Until then, `verify` continues to satisfy the current ruleset for PR #1.
+repository uses that name. Both names have been required on `main` since
+2026-11-12.
+
+GitHub attaches a check run to a commit, not to a pull request, and both
+workflows also run for pull requests into `rehearsal`, with that branch's
+scripts and template. The same head opened into both branches would otherwise
+show a required name green from the `rehearsal` run. So the two jobs take
+their name from the base branch, and a run into any base other than `main`
+cannot report a name `main` requires:
+
+| Base of the pull request | `verify.yml` job reports | `homebrew.yml` job reports |
+| --- | --- | --- |
+| `main` | `trusted-release` | `verify` |
+| `rehearsal` (any base that is not exactly `main`) | `rehearsal-trusted-release` | `rehearsal-verify` |
+
+The other jobs report `Static checks (<os>)` and `Homebrew installation
+(<platform>)` for either base; no ruleset requires those. The name of
+`trusted-release` is set by the default branch's workflow, which a pull
+request cannot change. `test_workflow_names.py` reads both workflows and fails
+if any job could report a required name for another base. The `rehearsal`
+branch is also closed to everyone but the releasers team (ruleset below), so
+the scripts a `rehearsal` run uses are reviewed ones.
 
 Required checks are matched by name and GitHub App, not by workflow ownership.
 Residual risk: a workflow-changing PR can publish any check name, including a
@@ -49,6 +69,22 @@ also fails. The proposed formula must match the **base commit's template**
 byte for byte, then the downloaded hash and signature of every platform's
 tarball must pass; one platform failing fails the check. There is no version
 exemption, including `0.0.0`.
+
+A signature ties a file to the release, not to a platform. After the hash and
+signature pass, the check therefore opens each tarball as data, without
+running anything in it. It requires exactly three regular files, `mosaik`,
+`guide.md` and `LICENSE`, and requires the first bytes of `mosaik` to be a
+64-bit executable for the platform whose block names it: Mach-O arm64 or
+x86_64 for macOS, ELF x86-64 or aarch64 for Linux. Another platform's signed
+tarball, or the signed `.cjs`, in that place fails.
+
+On `main` the version only moves forward. A formula change must propose a
+version greater than the one in the base's formula, comparing the three
+numbers; an equal or lower version fails with `version X is not greater than
+Y, the version on main`. A first formula may have any version, and `rehearsal`
+may repeat a version under a new tag. To withdraw a release, publish its
+predecessor's source again as a new, higher version; `main` never goes back to
+an older formula.
 
 If the formula is unchanged, trusted verification checks the tree and selects
 static mode. Proposed template/script/workflow changes run their static tests,
@@ -79,7 +115,7 @@ under the runner's temporary directory. It never checks out, imports or executes
 PR files: `git ls-tree`, `git diff` and `git show` inspect them as data. A moved
 head fails closed. The job uses `contents: read` only, no secrets or environment,
 no persisted checkout credentials, and no Actions cache reads or writes.
-The read token is available only during Git fetch and private-release download.
+The read token is available only during Git fetch and release download.
 The pinned cosign installer and signature verification execute trusted tooling;
 downloaded assets are never executed in this job.
 
@@ -89,7 +125,13 @@ no secrets. It runs on one GitHub-hosted runner per platform: `macos-latest`
 `ubuntu-24.04-arm` (linux-arm64). Each fresh runner repeats the **base** policy
 and template check and the hash and signature checks of all four tarballs for
 the event's exact head before checking it out or running Homebrew. They do not
-consume PR-written metadata or a shared cache from static checks. Each runner
+read a file or a shared cache written by the static checks. One value does
+come from the pull request's own code: the installation job starts only when
+the static job, running the head's `verify_tree.py`, reports that the tree
+holds a formula, and the `verify` job that sums up the results is the head's
+too. That is safe for a release because a pull request that changes the
+formula together with any script or workflow fails `trusted-release`; in a
+formula-only pull request those files are the base's reviewed ones. Each runner
 confirms it is the platform its job names, seeds its local Homebrew download
 cache with the verified tarball for that platform, and fails unless the cache
 path Homebrew chose for this machine ends in that tarball's name. It then
@@ -99,10 +141,9 @@ and requires that the installed binary links to nothing inside Homebrew.
 The trusted workflow must exist on the default branch before it can run.
 PR #1's original base (`80ff308`) contains only README.md. Its head-defined
 `verify` is the bootstrap check; it does not prove that `trusted-release` has
-run. The approved order is: the owner merges #1 under today's ruleset with
-`verify` green; immediately applies the ruleset update below; then the lead
-proves activation with two never-merged PRs. There is no fallback that runs
-head-owned checker code as trusted verification.
+run. The order followed was: the owner merged #1 under the ruleset of the time
+with `verify` green, then applied the ruleset update below. There is no
+fallback that runs head-owned checker code as trusted verification.
 
 `main` accepts only stable `X.Y.Z`, a `mosaik-vX.Y.Z` tap release and the exact
 `mosaic-auth/.github/workflows/deploy.yml@refs/tags/vX.Y.Z` signing identity.
@@ -178,6 +219,10 @@ with the source repository's release job:
 | `templates/mosaik.rb.tmpl` | One `url` and `sha256` pair per platform |
 | `.github/workflows/homebrew.yml` | The installation job's `matrix.include`, one runner per platform |
 
+`verify_download.py` holds no platform list: it reads the system and processor
+out of each platform's name. Dropping a platform needs no change there; a new
+system or processor needs its executable header added.
+
 To drop a platform, remove it from those three and from the README. So that
 its users still get one plain line from Homebrew, give its operating system's
 block the remaining platform's `url` and `sha256` directly, with an
@@ -211,9 +256,11 @@ change first, in a pull request that leaves `Formula/mosaik.rb` alone:
    release would therefore start with a template pull request, not a formula
    one.
 
-Owner steps for this change, none of which alters a setting or ruleset:
+Owner steps for this change. The first adds a ruleset; nothing on `main`
+changes:
 
-- Recreate the `rehearsal` branch from this change's branch before the
+- Apply the `rehearsal: releasers only` ruleset (commands above), then
+  recreate the `rehearsal` branch from this change's branch before the
   rehearsal, so that rehearsal pull requests are checked by the new scripts
   and template.
 - Merge this change before publishing the source release that proposes the
@@ -221,7 +268,9 @@ Owner steps for this change, none of which alters a setting or ruleset:
   `trusted-release`.
 - The required checks stay `verify` and `trusted-release`. The installation
   jobs are renamed `Homebrew installation (<platform>)`; they are not required
-  by name, `verify` requires them.
+  by name, `verify` requires them. Runs into `rehearsal` now report
+  `rehearsal-verify` and `rehearsal-trusted-release`; look for those names on
+  a rehearsal pull request.
 
 ## GitHub App
 
@@ -309,15 +358,14 @@ Do not interpret an API error as an applied setting.
 
 For an existing ruleset, use `PUT repos/$R/rulesets/<id>` with the same JSON
 instead of creating a duplicate. Bootstrap integration and creation of the
-`rehearsal` branch are owner/lead steps, outside this lane. Apply the required
+`rehearsal` branch are owner steps. Apply the required
 checks before merging any production formula update; never bypass a failing
 release check to ship a version.
 
-### Pending required-check update
+### Required-check update (applied 2026-11-12)
 
-Immediately after the owner merges bootstrap PR #1, update the existing
-integrity ruleset from `verify` alone to **`verify` and `trusted-release`**.
-From the reviewed checkout, run exactly:
+After bootstrap PR #1 merged, the integrity ruleset went from `verify` alone
+to **`verify` and `trusted-release`**. The commands were:
 
 ```sh
 gh api -X PUT repos/Sakeliga/mosaic-homebrew/rulesets/27056786 \
@@ -329,7 +377,41 @@ gh api repos/Sakeliga/mosaic-homebrew/rules/branches/main
 
 Expected contexts are `verify` and `trusted-release`, each with integration ID `15368`,
 strict up-to-date checks, and no bypass. The JSON preserves signed commits,
-no deletion and no force push. This update has **not** been applied by this PR.
+no deletion and no force push.
+
+### Rehearsal branch ruleset (not applied yet)
+
+`rehearsal` supplies the scripts and template for its own pull requests, so
+it must stay owner-controlled. The release App has Contents: write and could
+otherwise create or move the branch. It never needs to: the source
+repository's proposer creates a `propose/<tag>` branch and opens a pull
+request into `rehearsal`; it does not push `rehearsal` itself. The ruleset
+therefore gives the App no bypass. Run from the reviewed checkout, before the
+`rehearsal` branch is created:
+
+```sh
+R=Sakeliga/mosaic-homebrew
+TEAM=$(gh api orgs/Sakeliga/teams/mosaic-auth-releasers --jq .id)
+test "$TEAM" -gt 0 || exit 1
+jq --argjson team "$TEAM" '
+  .bypass_actors |= map(if .actor_type == "Team" then .actor_id = $team else . end)
+' .github/rulesets/rehearsal.json |
+  gh api -X POST "repos/$R/rulesets" --input -
+```
+
+Read it back, using the ID the first command prints:
+
+```sh
+gh api "repos/$R/rulesets" --jq '.[] | [.id, .name, .enforcement]'
+gh api "repos/$R/rulesets/<id>" --jq '{name, enforcement, conditions, bypass_actors, rules}'
+gh api "repos/$R/rules/branches/rehearsal"
+```
+
+Expected: enforcement `active`; the only bypass actor is the team
+(`20255150`), with no `Integration` entry; rules `creation`, `update` and
+`deletion`; and the three rules listed for the branch `rehearsal`. A member of
+the team then creates the branch and merges into it; anyone else, and the
+App, is refused. Record the ruleset ID in the applied record below.
 
 ### Activation checks after the bootstrap merge
 
@@ -347,7 +429,8 @@ heads and run URLs alongside the ruleset and App permission read-backs. These
 probes prove activation of the base-owned boundary; signed download and actual
 installation remain part of the release rehearsal.
 
-At publication, also retry the controls unavailable while private:
+Two controls were unavailable while the repository was private. Both read
+back as enabled on 2026-11-12; the commands were:
 
 ```sh
 gh api -X PUT repos/Sakeliga/mosaic-homebrew/private-vulnerability-reporting
@@ -359,8 +442,10 @@ gh api repos/Sakeliga/mosaic-homebrew/actions/permissions/fork-pr-contributor-ap
 
 ### Actions event policy at publication
 
-When the repository becomes public, the owner must explicitly permit the
-trusted workflow's `pull_request_target` event. Private repositories are exempt
+Now that the repository is public, the owner must explicitly permit the
+trusted workflow's `pull_request_target` event. Whether this policy exists is
+not recorded in this file; `trusted-release` ran on pull requests on
+2026-11-12, before the enforcement date. Private repositories are exempt
 from GitHub's default block; the default public policy is in evaluate mode
 until enforcement on **2026-12-02**. The following creates a repository-scoped
 policy for this workflow only and reads it back:
@@ -434,3 +519,15 @@ supplied evidence (the tap lane did not rerun repository administration calls):
   while private. Fork pull request contributor approval was not applied:
   the API returned `422` while private. Apply both when the repository becomes
   public; neither error is recorded as success.
+
+2026-11-12:
+
+- The repository is public (`visibility: public`, read on 2026-11-12).
+- `main: integrity` (`27056786`) requires `verify` and `trusted-release`, each
+  from integration `15368` (read on 2026-11-12 from
+  `repos/Sakeliga/mosaic-homebrew/rules/branches/main`).
+- Private vulnerability reporting is enabled (`{"enabled":true}`) and fork
+  pull request approval is `all_external_contributors` (both read on
+  2026-11-12).
+- `rehearsal: releasers only` is **not applied**; no `rehearsal` branch
+  exists.

@@ -10,7 +10,9 @@ permissions:
 
 jobs:
   trusted-release:
-    name: trusted-release
+    # Check runs attach to a commit, not to a pull request. Only a run whose base
+    # is `main` may report the name `main` requires; any other base gets another.
+    name: ${{ github.base_ref == 'main' && 'trusted-release' || 'rehearsal-trusted-release' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

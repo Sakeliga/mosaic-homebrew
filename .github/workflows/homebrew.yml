@@ -178,7 +178,8 @@ jobs:
           fi
 
   verify:
-    name: verify
+    # As in verify.yml: the name `main` requires comes only from a run into `main`.
+    name: ${{ github.base_ref == 'main' && 'verify' || 'rehearsal-verify' }}
     if: ${{ always() }}
     needs: [static, install]
     runs-on: ubuntu-latest

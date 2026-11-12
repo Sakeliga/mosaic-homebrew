@@ -3,9 +3,6 @@
 Mosaik's command-line tool lets you sign in and use Mosaik products from a terminal.
 It also lets an agent act with the access you give it.
 
-The first release is being prepared. This repository holds a formula template;
-installation becomes available when the first release pull request adds the formula.
-
 ## Install and sign in
 
 On macOS or Linux with [Homebrew](https://brew.sh) installed:
@@ -14,8 +11,6 @@ On macOS or Linux with [Homebrew](https://brew.sh) installed:
 brew tap mosaik/tap https://auth.mosaikhq.app/brew && brew trust --tap mosaik/tap && brew install mosaik
 mosaik auth login
 ```
-
-The `auth.mosaikhq.app/brew` address works from release 2.0.0. Until then, use the GitHub line below.
 
 Your browser opens for sign-in. If you belong to more than one organisation,
 choose the one to use.

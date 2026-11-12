@@ -1,0 +1,14 @@
+{
+  "name": "rehearsal: releasers only",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": { "ref_name": { "exclude": [], "include": ["refs/heads/rehearsal"] } },
+  "bypass_actors": [
+    { "actor_id": 0, "actor_type": "Team", "bypass_mode": "always" }
+  ],
+  "rules": [
+    { "type": "creation" },
+    { "type": "update" },
+    { "type": "deletion" }
+  ]
+}

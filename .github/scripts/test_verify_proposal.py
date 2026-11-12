@@ -7,7 +7,7 @@ from pathlib import Path
 
 from render_formula import PLATFORMS, placeholder, render
 from test_verify_release import values
-from verify_proposal import verify_proposal
+from verify_proposal import formula_version, verify_proposal
 
 TEMPLATE = Path(__file__).resolve().parents[2] / "templates/mosaik.rb.tmpl"
 
@@ -66,8 +66,8 @@ class ProposalTest(unittest.TestCase):
     def formula(self, template=None, **changed):
         self.write("Formula/mosaik.rb", render(template or TEMPLATE.read_bytes(), {**values(), **changed}))
 
-    def check(self):
-        return verify_proposal(self.root, self.base, self.snapshot(), "main")
+    def check(self, branch="main"):
+        return verify_proposal(self.root, self.base, self.snapshot(), branch)
 
     def test_formula_only_uses_base_template(self):
         self.formula()
@@ -76,14 +76,62 @@ class ProposalTest(unittest.TestCase):
         self.assertEqual([asset["platform"] for asset in proposal["assets"]], list(PLATFORMS))
         self.assertEqual(proposal["tag"], "mosaik-v2.1.0")
 
-    def test_one_platform_changed_in_a_merged_formula_is_a_release(self):
+    def release(self, version):
+        self.formula(**values(version, f"mosaik-v{version}"))
+
+    def test_main_accepts_only_a_greater_version_than_its_formula(self):
+        self.release("2.9.10")
+        self.base = self.snapshot()
+        for version in ("2.9.11", "2.10.0", "2.10.9", "3.0.0", "10.0.0"):
+            self.release(version)
+            with self.subTest(version=version):
+                self.assertEqual(self.check()["version"], version)
+        for version in ("2.9.9", "2.9.2", "2.1.0", "2.8.99", "1.99.99", "0.0.0"):
+            self.release(version)
+            with self.subTest(version=version), self.assertRaisesRegex(
+                    ValueError, f"version {version} is not greater than 2.9.10, the version on main"):
+                self.check()
+
+    def test_main_refuses_the_same_version_with_other_hashes(self):
         self.formula()
         self.base = self.snapshot()
-        name = placeholder("sha256", PLATFORMS[-1])
-        self.formula(**{name: "f" * 64})
-        proposal = self.check()
-        self.assertEqual(proposal["mode"], "release")
-        self.assertEqual(proposal["assets"][-1]["sha256"], "f" * 64)
+        self.formula(**{placeholder("sha256", PLATFORMS[-1]): "f" * 64})
+        with self.assertRaisesRegex(ValueError, "version 2.1.0 is not greater than 2.1.0"):
+            self.check()
+
+    def test_main_refuses_a_version_at_or_below_the_old_formula(self):
+        self.write("Formula/mosaik.rb", FORMULA_2_0_0)
+        self.base = self.snapshot()
+        for version in ("2.0.0", "1.9.9"):
+            self.release(version)
+            with self.subTest(version=version), self.assertRaisesRegex(ValueError, "not greater than 2.0.0"):
+                self.check()
+        self.release("2.0.1")
+        self.assertEqual(self.check()["version"], "2.0.1")
+
+    def test_first_formula_may_have_any_version(self):
+        self.release("0.0.1")
+        self.assertEqual(self.check()["version"], "0.0.1")
+
+    def test_rehearsal_may_repeat_a_version(self):
+        rehearsal = values("2.1.0", "rehearsal-v2.1.0-123-1")
+        self.formula(**rehearsal)
+        self.base = self.snapshot()
+        self.formula(**values("2.1.0", "rehearsal-v2.1.0-124-1"))
+        self.assertEqual(self.check("rehearsal")["tag"], "rehearsal-v2.1.0-124-1")
+
+    def test_unreadable_base_version_fails_closed(self):
+        self.assertEqual(formula_version(FORMULA_2_0_0), (2, 0, 0))
+        self.assertEqual(formula_version(render(TEMPLATE.read_bytes(), values())), (2, 1, 0))
+        mixed = render(TEMPLATE.read_bytes(), values()).replace(b'version "2.1.0"', b'version "2.2.0"')
+        for unreadable in (b"class Mosaik < Formula\nend\n", mixed):
+            with self.subTest(formula=unreadable), self.assertRaisesRegex(ValueError, "cannot read one version"):
+                formula_version(unreadable)
+            self.write("Formula/mosaik.rb", unreadable)
+            self.base = self.snapshot()
+            self.release("9.0.0")
+            with self.subTest(formula=unreadable), self.assertRaisesRegex(ValueError, "cannot read one version"):
+                self.check()
 
     def test_one_platform_outside_the_release_fails(self):
         for platform in PLATFORMS:

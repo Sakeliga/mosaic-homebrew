@@ -1,0 +1,160 @@
+name: Homebrew checks
+
+on:
+  pull_request:
+    branches: [main, rehearsal]
+
+permissions:
+  contents: read
+
+jobs:
+  static:
+    name: Static checks (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    outputs:
+      formula: ${{ steps.tree.outputs.release }}
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_ANALYTICS: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Exercise the proposed tree policy
+        id: tree
+        run: python3 .github/scripts/verify_tree.py >> "$GITHUB_OUTPUT"
+      - name: Locate Homebrew
+        run: |
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            echo /home/linuxbrew/.linuxbrew/bin >> "$GITHUB_PATH"
+          fi
+      - name: Test the proposed verification scripts
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
+      - name: Check template style
+        run: |
+          template_dir="$(brew --repository)/Library/Taps/mosaik/homebrew-template"
+          python3 .github/scripts/render_formula.py --version 0.0.0 \
+            --url https://github.com/Sakeliga/mosaic-homebrew/releases/download/mosaik-v0.0.0/mosaik-0.0.0.tar.gz \
+            --sha256 0000000000000000000000000000000000000000000000000000000000000000 \
+            --output "$template_dir/Formula/mosaik.rb"
+          brew style mosaik/template/mosaik
+      - name: Lint workflows
+        run: |
+          brew install actionlint
+          actionlint .github/workflows/*.yml
+
+  install:
+    name: Homebrew installation (${{ matrix.os }})
+    needs: [static]
+    if: needs.static.outputs.formula == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_ANALYTICS: "1"
+    steps:
+      # Fresh runners: no proposed script has run here. Repeat the trusted gate
+      # for this exact head before checking out or executing any proposed code.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+      - name: Fetch the exact head as bare Git data
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 .github/scripts/fetch_proposal.py --event "$GITHUB_EVENT_PATH" \
+            --base-checkout "$GITHUB_WORKSPACE" --output "$RUNNER_TEMP/proposal.git"
+      - name: Apply the base policy before execution
+        id: proposal
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
+        run: |
+          python3 .github/scripts/verify_proposal.py --repository "$RUNNER_TEMP/proposal.git" \
+            --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA" --branch "$BASE_BRANCH" \
+            --output "$RUNNER_TEMP/proposal.json" >> "$GITHUB_OUTPUT"
+      - name: Install signature verifier
+        if: steps.proposal.outputs.mode == 'release'
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3, cosign v3.1.4
+        with:
+          install-dir: ${{ runner.temp }}/cosign
+      - name: Download the release and signature
+        if: steps.proposal.outputs.mode == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(jq -r .tag "$RUNNER_TEMP/proposal.json")
+          asset=$(jq -r .asset "$RUNNER_TEMP/proposal.json")
+          mkdir "$RUNNER_TEMP/release"
+          gh release download "$tag" --repo Sakeliga/mosaic-homebrew \
+            --pattern "$asset" --pattern "$asset.sigstore.json" --dir "$RUNNER_TEMP/release"
+      - name: Verify hash and exact signing identity
+        if: steps.proposal.outputs.mode == 'release'
+        run: |
+          python3 .github/scripts/verify_download.py --proposal "$RUNNER_TEMP/proposal.json" \
+            --directory "$RUNNER_TEMP/release"
+      - name: Check out the accepted head for unprivileged installation
+        if: steps.proposal.outputs.mode == 'release'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Locate Homebrew
+        if: steps.proposal.outputs.mode == 'release'
+        run: |
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            echo /home/linuxbrew/.linuxbrew/bin >> "$GITHUB_PATH"
+          fi
+      - name: Register the accepted tap and cache the verified archive
+        if: steps.proposal.outputs.mode == 'release'
+        run: |
+          tap_dir="$(brew --repository)/Library/Taps/mosaik/homebrew-tap"
+          mkdir -p "$(dirname "$tap_dir")"
+          ln -s "$GITHUB_WORKSPACE" "$tap_dir"
+          if brew command trust >/dev/null 2>&1; then
+            brew trust --tap mosaik/tap
+          fi
+          asset=$(jq -r .asset "$RUNNER_TEMP/proposal.json")
+          cache=$(brew --cache --build-from-source mosaik/tap/mosaik)
+          mkdir -p "$(dirname "$cache")"
+          cp "$RUNNER_TEMP/release/$asset" "$cache"
+      - name: Audit, install and test
+        if: steps.proposal.outputs.mode == 'release'
+        run: |
+          brew audit --strict mosaik/tap/mosaik
+          brew style mosaik/tap/mosaik
+          brew install --build-from-source mosaik/tap/mosaik
+          brew test mosaik/tap/mosaik
+
+  verify:
+    name: verify
+    if: ${{ always() }}
+    needs: [static, install]
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Require both platforms and all applicable installation checks
+        env:
+          STATIC: ${{ needs.static.result }}
+          INSTALL: ${{ needs.install.result }}
+          FORMULA: ${{ needs.static.outputs.formula }}
+        run: |
+          test "$STATIC" = success
+          if [[ "$FORMULA" == true ]]; then
+            test "$INSTALL" = success
+          else
+            test "$FORMULA" = false
+            test "$INSTALL" = skipped
+          fi

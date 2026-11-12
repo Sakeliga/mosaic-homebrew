@@ -11,18 +11,19 @@ installation becomes available when the first release pull request adds the form
 On macOS or Linux with [Homebrew](https://brew.sh) installed:
 
 ```sh
-brew tap mosaik/tap https://auth.mosaikhq.app/brew && brew trust --tap mosaik/tap && brew install mosaik
+brew tap mosaik/tap https://github.com/Sakeliga/mosaic-homebrew && brew trust --tap mosaik/tap && brew install mosaik
 mosaik auth login
 ```
 
 Your browser opens for sign-in. If you belong to more than one organisation,
 choose the one to use. Homebrew installs Node 24 for you.
 
-The install command uses Homebrew 7's explicit tap trust. The Mosaik URL
-redirects to this repository. You can use the repository URL directly instead:
+The install command uses Homebrew 7's explicit tap trust. From release 2.0.0,
+you can reach the same tap through Mosaik's own address instead. This redirect
+becomes available when that release is deployed to production:
 
 ```sh
-brew tap mosaik/tap https://github.com/Sakeliga/mosaic-homebrew.git && brew trust --tap mosaik/tap && brew install mosaik
+brew tap mosaik/tap https://auth.mosaikhq.app/brew && brew trust --tap mosaik/tap && brew install mosaik
 ```
 
 Run `mosaik --help` for commands or `mosaik guide` for instructions for an agent.
@@ -86,17 +87,18 @@ files using Sigstore. A GitHub App publishes the files here and opens a pull
 request rendering [the formula template](templates/mosaik.rb.tmpl) with the
 release URL and sha256. Homebrew infers the version from the URL.
 
-This tap requires the formula to match the rendered template byte for byte,
-then checks the exact release URL, downloaded hash and signing identity,
-then audits, installs and tests the formula on macOS and Linux. A member of
+Release pull requests may change only the formula. Trusted checks use the
+base branch's scripts and template, require an exact rendered match, and
+check the release URL, downloaded hash and signing identity. Separate
+unprivileged checks audit, install and test on macOS and Linux. A member of
 the releasers team must review and approve the pull request before it reaches
 `main`. Homebrew then installs the reviewed version using Node 24's explicit
 path. See [.github/settings.md](.github/settings.md) for the protections and
 their application status.
 
-Before a formula exists, pull requests run static checks of the template,
-workflow and verification scripts. Once a formula exists, all download,
-signature and installation checks are required, even for version `0.0.0`.
+Pull requests that leave the formula unchanged run static checks of the
+template, workflows and verification scripts, and need code-owner approval.
+Any formula change requires all release checks, even for version `0.0.0`.
 
 Rehearsals use prereleases tagged `rehearsal-v<X.Y.Z>-<run_id>-<run_attempt>` and pull requests
 against `rehearsal`. Only that branch accepts signatures from the source

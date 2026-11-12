@@ -9,8 +9,8 @@ permissions:
   contents: read
 
 jobs:
-  verify:
-    name: verify
+  trusted-release:
+    name: trusted-release
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

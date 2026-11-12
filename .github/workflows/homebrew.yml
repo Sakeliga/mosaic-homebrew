@@ -138,8 +138,8 @@ jobs:
           brew install --build-from-source mosaik/tap/mosaik
           brew test mosaik/tap/mosaik
 
-  homebrew:
-    name: homebrew
+  verify:
+    name: verify
     if: ${{ always() }}
     needs: [static, install]
     runs-on: ubuntu-latest

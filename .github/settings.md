@@ -10,7 +10,7 @@ the protections read back on 2026-11-11 from the pending check-name update.
 | Setting | Source | Effect |
 | --- | --- | --- |
 | `main: review` | `rulesets/main-review.json` | Pull request, one code-owner approval, latest-push approval, stale approvals dismissed, resolved threads, squash only. No bypass |
-| `main: integrity` | `rulesets/main-integrity.json` | Signed commits, up-to-date `verify` and `homebrew` checks from GitHub Actions, no force push or deletion. No bypass |
+| `main: integrity` | `rulesets/main-integrity.json` | Signed commits, up-to-date `verify` and `trusted-release` checks from GitHub Actions, no force push or deletion. No bypass |
 | CLI release tags | `rulesets/tags.json` | Only `mosaic-auth-releasers` and the release GitHub App can create, update or delete `mosaik-v*` and `rehearsal-v*` tags |
 | CODEOWNERS | `CODEOWNERS` | Every file requires `@Sakeliga/mosaic-auth-releasers` review; the team must have explicit write access |
 | Immutable releases | Repository setting | Published release assets and tags cannot be replaced |
@@ -24,13 +24,23 @@ Two checks are required, both from GitHub Actions (integration ID `15368`):
 
 | Required name | Workflow / job | Evidence |
 | --- | --- | --- |
-| `verify` | `verify.yml` / `verify`, on `pull_request_target` | Trusted tree, change isolation, base-template, release hash and signature checks |
-| `homebrew` | `homebrew.yml` / `homebrew`, on `pull_request` | Both OS static jobs and every applicable installation job passed |
+| `trusted-release` | `verify.yml` / `trusted-release`, on `pull_request_target` | Trusted tree, change isolation, base-template, release hash and signature checks |
+| `verify` | `homebrew.yml` / `verify`, on `pull_request` | Both OS static jobs and every applicable installation job passed; also today's bootstrap check |
 
-`verify` is exclusively the trusted job's result; the unprivileged workflow
-does not publish a job with that name. The owner must add `homebrew` to the
-existing required checks (commands below). Requiring only the old name no
-longer requires installation checks.
+`trusted-release` is reserved for the trusted job; no head-defined job in this
+repository uses that name. The owner must add `trusted-release` to the existing
+required `verify` check immediately after the bootstrap merge (commands below).
+Until then, `verify` continues to satisfy the current ruleset for PR #1.
+
+Required checks are matched by name and GitHub App, not by workflow ownership.
+Residual risk: a workflow-changing PR can publish any check name, including a
+competing `trusted-release` result. The real trusted job rejects any formula
+change combined with `.github/**` or any other changed path; a workflow change
+must be separate from a formula change and needs a code owner's approval.
+Reviewers must inspect workflow changes for competing check names rather than
+treating a green name as proof of its origin. This design also relies on the
+release App having **no Workflows permission**, checked below, so its token
+cannot add or modify a workflow to publish a competing result.
 
 If `Formula/mosaik.rb` differs from the event's base commit, it must be the
 only changed path. A combined formula plus template, script, workflow, or
@@ -80,11 +90,12 @@ from static checks. Only these unprivileged runners seed a local Homebrew
 download cache with the verified tarball for private-release installation.
 
 The trusted workflow must exist on the default branch before it can run.
-PR #1's original base (`80ff308`) contains only README.md: green bootstrap
-`homebrew` checks cannot prove that `verify` has run. The owner must activate
-this reviewed trust policy on the default branch, then obtain the trusted check
-on a subsequent PR event before accepting release PRs. There is no fallback
-that runs head-owned checker code as trusted verification.
+PR #1's original base (`80ff308`) contains only README.md. Its head-defined
+`verify` is the bootstrap check; it does not prove that `trusted-release` has
+run. The approved order is: the owner merges #1 under today's ruleset with
+`verify` green; immediately applies the ruleset update below; then the lead
+proves activation with two never-merged PRs. There is no fallback that runs
+head-owned checker code as trusted verification.
 
 `main` accepts only stable `X.Y.Z`, a `mosaik-vX.Y.Z` tap release and the exact
 `mosaic-auth/.github/workflows/deploy.yml@refs/tags/vX.Y.Z` signing identity.
@@ -122,10 +133,32 @@ The guide is embedded in the CLI; `share/mosaik/guide.md` is a convenience copy.
 ## GitHub App
 
 The release App is installed on **this repository only**, with repository
-Contents: write and Pull requests: write (Metadata: read is implicit). It
+Contents: write and Pull requests: write (Metadata: read is implicit), and
+**no Workflows permission**. This is a security property of the design: a stolen
+App token cannot add or modify `.github/workflows/` to spoof a required check.
+Do not grant Workflows permission when creating or updating the App. It
 publishes assets and opens formula PRs. It has no bypass on either main ruleset
 and cannot approve its own updates. The source repository holds the App's ID
 and private key in its release environment; no App secret belongs in this tap.
+
+The owner must read back the installation permissions and check the exact
+permission set before activation and after any App permission change:
+
+```sh
+gh api --paginate orgs/Sakeliga/installations \
+  --jq '.installations[] | select(.app_id == 5717044) | {id, app_id, repository_selection, permissions, html_url}'
+gh api --paginate --slurp orgs/Sakeliga/installations | jq -e '
+  [.[].installations[] | select(.app_id == 5717044)] |
+  length == 1 and
+  (.[0].repository_selection == "selected") and
+  (.[0].permissions == {"contents":"write", "pull_requests":"write", "metadata":"read"})
+'
+```
+
+The assertion rejects a `workflows` grant or any other extra permission. Open
+the returned installation `html_url` and confirm the only selected repository
+is `Sakeliga/mosaic-homebrew`. The lane has not run these organization-admin
+reads; record the owner's result with the activation evidence.
 
 ## Apply
 
@@ -189,9 +222,9 @@ release check to ship a version.
 
 ### Pending required-check update
 
-After the owner has activated the trusted workflow on the default branch and
-observed both checks, update the existing integrity ruleset from `verify` alone
-to **`verify` and `homebrew`**. From the reviewed checkout, run exactly:
+Immediately after the owner merges bootstrap PR #1, update the existing
+integrity ruleset from `verify` alone to **`verify` and `trusted-release`**.
+From the reviewed checkout, run exactly:
 
 ```sh
 gh api -X PUT repos/Sakeliga/mosaic-homebrew/rulesets/27056786 \
@@ -201,9 +234,25 @@ gh api repos/Sakeliga/mosaic-homebrew/rulesets/27056786 \
 gh api repos/Sakeliga/mosaic-homebrew/rules/branches/main
 ```
 
-Expected contexts are `verify` and `homebrew`, each with integration ID `15368`,
+Expected contexts are `verify` and `trusted-release`, each with integration ID `15368`,
 strict up-to-date checks, and no bypass. The JSON preserves signed commits,
 no deletion and no force push. This update has **not** been applied by this PR.
+
+### Activation checks after the bootstrap merge
+
+The lead opens two throwaway PRs against `main`, both from the newly merged
+base, and **never merges either**:
+
+| Probe | Expected result |
+| --- | --- |
+| Add or change `Formula/mosaik.rb` and also change `templates/mosaik.rb.tmpl` | `trusted-release` fails, naming the template as another changed path, before any download or formula execution |
+| Change only `templates/mosaik.rb.tmpl` in a way that still passes style and rendering tests | `trusted-release` passes in static mode; both OS static checks and the ordinary `verify` pass |
+
+Inspect the trusted run's event (`pull_request_target`), default-branch workflow
+source and event base/head SHAs, not only the check name. Record both PR URLs,
+heads and run URLs alongside the ruleset and App permission read-backs. These
+probes prove activation of the base-owned boundary; signed download and actual
+installation remain part of the release rehearsal.
 
 At publication, also retry the controls unavailable while private:
 
@@ -215,10 +264,42 @@ gh api repos/Sakeliga/mosaic-homebrew/private-vulnerability-reporting
 gh api repos/Sakeliga/mosaic-homebrew/actions/permissions/fork-pr-contributor-approval
 ```
 
-Before GitHub's 2026-12-02 public-repository enforcement date, the owner must
-also ensure an applicable Actions event policy explicitly allows this
-`pull_request_target` workflow. Otherwise the trusted check will be blocked.
-See [GitHub's event policy documentation](https://docs.github.com/en/actions/reference/security/securely-using-pull_request_target).
+### Actions event policy at publication
+
+When the repository becomes public, the owner must explicitly permit the
+trusted workflow's `pull_request_target` event. Private repositories are exempt
+from GitHub's default block; the default public policy is in evaluate mode
+until enforcement on **2026-12-02**. The following creates a repository-scoped
+policy for this workflow only and reads it back:
+
+```sh
+tap_policy_id=$(gh api -X POST repos/Sakeliga/mosaic-homebrew/actions/policies --jq .id --input - <<'JSON'
+{
+  "name": "Mosaik trusted release verification",
+  "enforcement": "active",
+  "conditions": {
+    "workflow_path": {"include": [".github/workflows/verify.yml"], "exclude": []}
+  },
+  "rules": [{
+    "type": "restrict_action_events",
+    "parameters": {"allowed_events": ["pull_request_target"]}
+  }]
+}
+JSON
+)
+gh api "repos/Sakeliga/mosaic-homebrew/actions/policies/$tap_policy_id"
+gh api --paginate repos/Sakeliga/mosaic-homebrew/actions/policies
+```
+
+If this named policy already exists, use `PUT` with its ID instead of creating
+a duplicate. Read back the active enforcement, exact workflow path and allowed
+event; inspect inherited policies in the list too, since a stricter parent
+policy also needs the owner's attention. Then repeat the passing activation
+probe and retain its trusted run URL. If permission is missing after the
+enforcement date, `trusted-release` will not run or report: its required check
+remains missing, so nothing can merge. This fails closed.
+See [GitHub's event policy documentation](https://docs.github.com/en/actions/reference/security/securely-using-pull_request_target)
+and [policy API](https://docs.github.com/en/rest/actions/policies).
 
 ## Read back
 
@@ -237,7 +318,7 @@ gh api "repos/$R/actions/permissions/fork-pr-contributor-approval"
 gh api "repos/$R/actions/permissions/fork-pr-workflows-private-repos"
 ```
 
-The P3 rehearsal also demonstrates a wrong-hash PR failing `verify` and a
+The P3 rehearsal also demonstrates a wrong-hash PR failing `trusted-release` and a
 direct push to `main` being refused. These are evidence tasks for the lead,
 not actions performed by the tap lane.
 
@@ -250,7 +331,7 @@ supplied evidence (the tap lane did not rerun repository administration calls):
   `t-alberts`, has push access.
 - Rulesets `main: review` (`27056785`), `main: integrity` (`27056786`) and
   `CLI release tags` (`27056789`) are active. The applied integrity rule requires
-  the previous `verify` check only; adding `homebrew` remains pending above.
+  the existing `verify` check only; adding `trusted-release` remains pending above.
 - GitHub App **Mosaik tap release**, App ID `5717044`, is installed on this
   repository only.
 - Immutable releases enabled; read-back response: `{"enabled":true}`.

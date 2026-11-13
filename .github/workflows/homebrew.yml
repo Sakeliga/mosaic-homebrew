@@ -39,9 +39,7 @@ jobs:
       - name: Check template style
         run: |
           template_dir="$(brew --repository)/Library/Taps/mosaik/homebrew-template"
-          python3 .github/scripts/render_formula.py --version 0.0.0 \
-            --url https://github.com/Sakeliga/mosaic-homebrew/releases/download/mosaik-v0.0.0/mosaik-0.0.0.tar.gz \
-            --sha256 0000000000000000000000000000000000000000000000000000000000000000 \
+          python3 .github/scripts/render_formula.py --example \
             --output "$template_dir/Formula/mosaik.rb"
           brew style mosaik/template/mosaik
       - name: Lint workflows
@@ -50,14 +48,23 @@ jobs:
           actionlint .github/workflows/*.yml
 
   install:
-    name: Homebrew installation (${{ matrix.os }})
+    name: Homebrew installation (${{ matrix.platform }})
     needs: [static]
     if: needs.static.outputs.formula == 'true'
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest]
-    runs-on: ${{ matrix.os }}
+        # One GitHub-hosted runner per platform the formula has a binary for.
+        include:
+          - platform: darwin-arm64
+            runner: macos-latest
+          - platform: darwin-x64
+            runner: macos-26-intel
+          - platform: linux-x64
+            runner: ubuntu-latest
+          - platform: linux-arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     env:
       HOMEBREW_NO_AUTO_UPDATE: "1"
@@ -67,18 +74,21 @@ jobs:
       # for this exact head before checking out or executing any proposed code.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ github.base_ref == 'main' && 'refs/heads/main' || github.event.pull_request.base.sha }}
+          fetch-depth: 0
           persist-credentials: false
-      - name: Fetch the exact head as bare Git data
+      - name: Choose the judging commit and fetch the exact head as bare Git data
+        id: fetch
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           python3 .github/scripts/fetch_proposal.py --event "$GITHUB_EVENT_PATH" \
-            --base-checkout "$GITHUB_WORKSPACE" --output "$RUNNER_TEMP/proposal.git"
+            --base-checkout "$GITHUB_WORKSPACE" --output "$RUNNER_TEMP/proposal.git" >> "$GITHUB_OUTPUT"
       - name: Apply the base policy before execution
         id: proposal
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          # The scripts on main before this step existed print no judging commit.
+          BASE_SHA: ${{ steps.fetch.outputs.base_sha || github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
         run: |
@@ -90,17 +100,20 @@ jobs:
         uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3, cosign v3.1.4
         with:
           install-dir: ${{ runner.temp }}/cosign
-      - name: Download the release and signature
+      - name: Download every platform's tarball and signature
         if: steps.proposal.outputs.mode == 'release'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag=$(jq -r .tag "$RUNNER_TEMP/proposal.json")
-          asset=$(jq -r .asset "$RUNNER_TEMP/proposal.json")
+          patterns=()
+          while IFS= read -r asset; do
+            patterns+=(--pattern "$asset" --pattern "$asset.sigstore.json")
+          done < <(jq -r '.assets[].asset' "$RUNNER_TEMP/proposal.json")
           mkdir "$RUNNER_TEMP/release"
           gh release download "$tag" --repo Sakeliga/mosaic-homebrew \
-            --pattern "$asset" --pattern "$asset.sigstore.json" --dir "$RUNNER_TEMP/release"
-      - name: Verify hash and exact signing identity
+            "${patterns[@]}" --dir "$RUNNER_TEMP/release"
+      - name: Verify every hash and exact signing identity
         if: steps.proposal.outputs.mode == 'release'
         run: |
           python3 .github/scripts/verify_download.py --proposal "$RUNNER_TEMP/proposal.json" \
@@ -117,17 +130,31 @@ jobs:
           if [[ "$RUNNER_OS" == Linux ]]; then
             echo /home/linuxbrew/.linuxbrew/bin >> "$GITHUB_PATH"
           fi
-      - name: Register the accepted tap and cache the verified archive
+      - name: Register the accepted tap and cache this platform's verified tarball
         if: steps.proposal.outputs.mode == 'release'
+        env:
+          PLATFORM: ${{ matrix.platform }}
         run: |
+          case "$(uname -s)-$(uname -m)" in
+            Darwin-arm64) machine=darwin-arm64 ;;
+            Darwin-x86_64) machine=darwin-x64 ;;
+            Linux-x86_64) machine=linux-x64 ;;
+            Linux-aarch64 | Linux-arm64) machine=linux-arm64 ;;
+            *) machine=unknown ;;
+          esac
+          test "$machine" = "$PLATFORM"
           tap_dir="$(brew --repository)/Library/Taps/mosaik/homebrew-tap"
           mkdir -p "$(dirname "$tap_dir")"
           ln -s "$GITHUB_WORKSPACE" "$tap_dir"
           if brew command trust >/dev/null 2>&1; then
             brew trust --tap mosaik/tap
           fi
-          asset=$(jq -r .asset "$RUNNER_TEMP/proposal.json")
+          asset=$(jq -r --arg platform "$PLATFORM" \
+            '.assets[] | select(.platform == $platform) | .asset' "$RUNNER_TEMP/proposal.json")
+          test -n "$asset"
           cache=$(brew --cache --build-from-source mosaik/tap/mosaik)
+          # Homebrew chose this machine's URL itself; it must be the tarball checked above.
+          [[ "$cache" == *"--$asset" ]]
           mkdir -p "$(dirname "$cache")"
           cp "$RUNNER_TEMP/release/$asset" "$cache"
       - name: Audit, install and test
@@ -137,15 +164,42 @@ jobs:
           brew style mosaik/tap/mosaik
           brew install --build-from-source mosaik/tap/mosaik
           brew test mosaik/tap/mosaik
+      - name: Require one self-contained file
+        if: steps.proposal.outputs.mode == 'release'
+        run: |
+          test -z "$(brew deps mosaik/tap/mosaik)"
+          binary="$(brew --prefix mosaik)/bin/mosaik"
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            linked=$(otool -L "$binary" | tail -n +2)
+          else
+            linked=$(ldd "$binary")
+          fi
+          echo "$linked"
+          # Only the system's own libraries: nothing may resolve inside Homebrew.
+          if grep -F "$(brew --prefix)" <<<"$linked"; then
+            exit 1
+          fi
 
   verify:
-    name: verify
+    # As in verify.yml: the name `main` requires comes only from a run into `main`.
+    name: ${{ github.base_ref == 'main' && 'verify' || 'rehearsal-verify' }}
     if: ${{ always() }}
     needs: [static, install]
     runs-on: ubuntu-latest
     permissions: {}
     steps:
-      - name: Require both platforms and all applicable installation checks
+      - name: Refuse a required check name for any base but main
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          REQUIRED_NAME: ${{ github.base_ref == 'main' }}
+        run: |
+          # Expressions compare without regard to case, so `Main` also gets the
+          # required name above. The shell compares exactly.
+          if [[ "$REQUIRED_NAME" == "true" && "$BASE_REF" != "main" ]]; then
+            echo "Base '$BASE_REF' is not main; this run may not report a check that main requires." >&2
+            exit 1
+          fi
+      - name: Require both static jobs and every platform's installation check
         env:
           STATIC: ${{ needs.static.result }}
           INSTALL: ${{ needs.install.result }}

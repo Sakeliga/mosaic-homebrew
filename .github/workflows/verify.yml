@@ -10,26 +10,43 @@ permissions:
 
 jobs:
   trusted-release:
-    name: trusted-release
+    # Check runs attach to a commit, not to a pull request. Only a run whose base
+    # is `main` may report the name `main` requires; any other base gets another.
+    name: ${{ github.base_ref == 'main' && 'trusted-release' || 'rehearsal-trusted-release' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
-      # The workflow is owned by the default branch; scripts/template are pinned
-      # to the event's protected base commit. No PR file is ever checked out here.
+      - name: Refuse a required check name for any base but main
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          REQUIRED_NAME: ${{ github.base_ref == 'main' }}
+        run: |
+          # Expressions compare without regard to case, so `Main` also gets the
+          # required name above. The shell compares exactly.
+          if [[ "$REQUIRED_NAME" == "true" && "$BASE_REF" != "main" ]]; then
+            echo "Base '$BASE_REF' is not main; this run may not report a check that main requires." >&2
+            exit 1
+          fi
+      # The workflow is owned by the default branch. For a pull request into main
+      # the scripts and template are main's own current tip, and the event's base
+      # commit must be a commit of main; for rehearsal they are the event's base
+      # commit. No PR file is ever checked out here.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ github.base_ref == 'main' && 'refs/heads/main' || github.event.pull_request.base.sha }}
+          fetch-depth: 0
           persist-credentials: false
-      - name: Fetch the exact head as bare Git data
+      - name: Choose the judging commit and fetch the exact head as bare Git data
+        id: fetch
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           python3 .github/scripts/fetch_proposal.py --event "$GITHUB_EVENT_PATH" \
-            --base-checkout "$GITHUB_WORKSPACE" --output "$RUNNER_TEMP/proposal.git"
+            --base-checkout "$GITHUB_WORKSPACE" --output "$RUNNER_TEMP/proposal.git" >> "$GITHUB_OUTPUT"
       - name: Enforce base policy and template
         id: proposal
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_SHA: ${{ steps.fetch.outputs.base_sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
         run: |
@@ -41,17 +58,20 @@ jobs:
         uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3, cosign v3.1.4
         with:
           install-dir: ${{ runner.temp }}/cosign
-      - name: Download the release and signature
+      - name: Download every platform's tarball and signature
         if: steps.proposal.outputs.mode == 'release'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag=$(jq -r .tag "$RUNNER_TEMP/proposal.json")
-          asset=$(jq -r .asset "$RUNNER_TEMP/proposal.json")
+          patterns=()
+          while IFS= read -r asset; do
+            patterns+=(--pattern "$asset" --pattern "$asset.sigstore.json")
+          done < <(jq -r '.assets[].asset' "$RUNNER_TEMP/proposal.json")
           mkdir "$RUNNER_TEMP/release"
           gh release download "$tag" --repo Sakeliga/mosaic-homebrew \
-            --pattern "$asset" --pattern "$asset.sigstore.json" --dir "$RUNNER_TEMP/release"
-      - name: Verify hash and exact signing identity
+            "${patterns[@]}" --dir "$RUNNER_TEMP/release"
+      - name: Verify every hash and exact signing identity
         if: steps.proposal.outputs.mode == 'release'
         run: |
           python3 .github/scripts/verify_download.py --proposal "$RUNNER_TEMP/proposal.json" \

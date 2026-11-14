@@ -1,28 +1,28 @@
 class Mosaik < Formula
   desc "Sign in to Mosaik and use its products from a terminal or agent"
   homepage "https://auth.mosaikhq.app"
-  version "2.1.0"
+  version "2.2.0"
   license :cannot_represent
 
   on_macos do
     on_arm do
-      url "https://github.com/Sakeliga/mosaic-homebrew/releases/download/mosaik-v2.1.0/mosaik-2.1.0-darwin-arm64.tar.gz"
-      sha256 "cb7b40d6d6196511af44f80923d4d7a60923215ea6c9927e8494def4a47aaa77"
+      url "https://github.com/Sakeliga/mosaic-homebrew/releases/download/mosaik-v2.2.0/mosaik-2.2.0-darwin-arm64.tar.gz"
+      sha256 "7bcd12d6a68dd456faf06c503e09b831d5c2330a4bac2dd2c4708470ecb28789"
     end
     on_intel do
-      url "https://github.com/Sakeliga/mosaic-homebrew/releases/download/mosaik-v2.1.0/mosaik-2.1.0-darwin-x64.tar.gz"
-      sha256 "72c9b892e394c973539794f44815fce6efdd324c83f8aec35ed3718eb35e2ac6"
+      url "https://github.com/Sakeliga/mosaic-homebrew/releases/download/mosaik-v2.2.0/mosaik-2.2.0-darwin-x64.tar.gz"
+      sha256 "d2b12d259c51f2047525cb759a5faa2039d78751e3852967d004249575a2a075"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/Sakeliga/mosaic-homebrew/releases/download/mosaik-v2.1.0/mosaik-2.1.0-linux-arm64.tar.gz"
-      sha256 "4307b9e963543c4f7460de974dce1c5bc6277ed721a4cdc3e8a602eba17ddb65"
+      url "https://github.com/Sakeliga/mosaic-homebrew/releases/download/mosaik-v2.2.0/mosaik-2.2.0-linux-arm64.tar.gz"
+      sha256 "0530888571f0944220bbbcf6cb7bf4220b996ba17d8ceb12386777d455f627e8"
     end
     on_intel do
-      url "https://github.com/Sakeliga/mosaic-homebrew/releases/download/mosaik-v2.1.0/mosaik-2.1.0-linux-x64.tar.gz"
-      sha256 "ea844ff09e181e20649ddcd81b06f41a42fc207bcb827a0edf7c76afc53d6ef6"
+      url "https://github.com/Sakeliga/mosaic-homebrew/releases/download/mosaik-v2.2.0/mosaik-2.2.0-linux-x64.tar.gz"
+      sha256 "1fc32ac19d8b51a48bfb9a7b43f474781caf12c55af337c9b2d1bb1c05d43ee8"
     end
   end
 
